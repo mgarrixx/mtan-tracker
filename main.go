@@ -16,14 +16,14 @@ import (
 	"github.com/yeka/zip"
 )
 
-const START_YEAR = 2021
-const END_YEAR = 2023
+const START_YEAR = 2024 // (From Jan. 8, 2024) Posts uploaded between 2013-2020 are no longer accessible.
+const END_YEAR = 2024
 const BASE_URL = "https://www.malware-traffic-analysis.net"
 
 func main() {
 	for y := START_YEAR; y <= END_YEAR; y++ {
 
-		sub_url, _ := url.JoinPath(BASE_URL, strconv.Itoa(y))
+		sub_url, _ := url.JoinPath(BASE_URL, strconv.Itoa(y)) // ex) "/2013"
 
 		resp, err := http.Get(sub_url)
 
@@ -39,7 +39,7 @@ func main() {
 			log.Fatal("[Failed to read a html document]\n", err)
 		}
 
-		sub_dir := filepath.Join("./res", strconv.Itoa(y))
+		sub_dir := filepath.Join("./res", strconv.Itoa(y)) // ex) "./res/2013"
 
 		if _, err := os.Stat(sub_dir); os.IsNotExist(err) {
 			// directory for a certain year does not exist
@@ -51,14 +51,14 @@ func main() {
 		doc.Find("li .main_menu").Each(func(i int, s *goquery.Selection) {
 			link, _ := s.Attr("href")
 
-			if link == "../index.html" {
+			if link == "../index.html" || s.Text() == "" { // exclude the link to base URL
 				return
 			}
 
 			re_index := regexp.MustCompile("([0-9a-zA-Z]+).html")
 			link = re_index.ReplaceAllString(link, "")
 
-			post_url, _ := url.JoinPath(sub_url, link)
+			post_url, _ := url.JoinPath(sub_url, link) // ex) /2013/06/21/
 
 			resp, err := http.Get(post_url)
 
@@ -74,6 +74,12 @@ func main() {
 
 			date := strings.Split(link, "/")
 			article_name := strconv.Itoa(y) + "-" + date[0] + "-" + date[1] + "-" + s.Text()
+			zip_passwd := "infected"
+
+			if y >= 2024 {
+				article_name = s.Text()
+				zip_passwd = "infected_" + strconv.Itoa(y) + date[0] + date[1]
+			}
 
 			// file name can't include symbol ':', '>', '/', etc.
 			re := strings.NewReplacer(
@@ -89,8 +95,8 @@ func main() {
 			)
 
 			article_name = re.Replace(article_name)
-			post_dir := filepath.Join(sub_dir, article_name)
-			post_path := filepath.Join(post_dir, "index.html")
+			post_dir := filepath.Join(sub_dir, article_name)   // ex) "./res/2013/2013-06-21-blur"
+			post_path := filepath.Join(post_dir, "index.html") // ex) "./res/2013/2013-06-21-blur.index.html"
 
 			if _, err := os.Stat(post_dir); os.IsNotExist(err) {
 				// directory for a certain post entity does not exist
@@ -99,7 +105,7 @@ func main() {
 				}
 			}
 
-			err = DownloadFile(post_path, post_url, false)
+			err = DownloadFile(post_path, post_url, false, "")
 
 			if err != nil {
 				log.Fatal("[Download index.html failed]\n", err, post_path)
@@ -114,7 +120,7 @@ func main() {
 					return
 				}
 
-				file_url, err := url.JoinPath(post_url, res_link)
+				file_url, err := url.JoinPath(post_url, res_link) // /2013/06/21/example.pcap.zip
 
 				if err != nil {
 					log.Fatal(err)
@@ -123,12 +129,12 @@ func main() {
 				if strings.HasSuffix(res_link, ".pcap.zip") || strings.HasSuffix(res_link, ".pcaps.zip") { // packet data
 					file_path := filepath.Join(post_dir, "packet"+strconv.Itoa(i)+".zip")
 					fmt.Printf("--Packet : %s\n", res_link)
-					err = DownloadFile(file_path, file_url, true)
+					err = DownloadFile(file_path, file_url, true, zip_passwd)
 				} else { // other materials
 					file_idx += 1
 					file_path := filepath.Join(post_dir, "associated files"+strconv.Itoa(file_idx)+".zip")
 					fmt.Printf("--Others : %s\n", res_link)
-					err = DownloadFile(file_path, file_url, false)
+					err = DownloadFile(file_path, file_url, false, "")
 				}
 
 				if err != nil {
@@ -142,7 +148,7 @@ func main() {
 }
 
 // Download from a given url to a file.
-func DownloadFile(path string, url string, extract bool) error {
+func DownloadFile(path string, url string, extract bool, passwd string) error {
 	err := os.MkdirAll(filepath.Dir(path), 0770)
 
 	if err != nil {
@@ -172,7 +178,7 @@ func DownloadFile(path string, url string, extract bool) error {
 	defer out.Close()
 
 	if extract {
-		err = unzip(path)
+		err = unzip(path, passwd)
 
 		if err != nil {
 			return err
@@ -187,7 +193,7 @@ func DownloadFile(path string, url string, extract bool) error {
 }
 
 // Unzip files with a secret password
-func unzip(src string) error {
+func unzip(src string, passwd string) error {
 	r, err := zip.OpenReader(src)
 
 	if err != nil {
@@ -201,7 +207,7 @@ func unzip(src string) error {
 
 	for _, f := range r.File {
 		if f.IsEncrypted() {
-			f.SetPassword("infected")
+			f.SetPassword(passwd)
 		}
 
 		rc, err := f.Open()
